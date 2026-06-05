@@ -229,7 +229,7 @@ acd.json = {
     }
 };
 
-KeywordArgument ("output", "Write the resulting JSON to this file (default is to save to the same path as the alignment file + '.json')", acd.codon_data_info [terms.json.json], "Save the resulting JSON to this file");
+KeywordArgument ("output", "Write the resulting JSON to this file (default is to save to the same path as the alignment file + '.ACD.json')", acd.codon_data_info[terms.data.file] + ".ACD.json", "Save the resulting JSON to this file");
 output_path = io.PromptUserForFilePath("Save the resulting JSON to this file");
 
 io.SpoolJSON (acd.json, output_path);
