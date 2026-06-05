@@ -15,7 +15,7 @@
   - Model Fit Summary (Calculates and displays `AIC-c` as well using codon size constraints)
   - Global Parameter Estimates
   - Branch Lengths
-- **(d) JSON Output**: Converted old hardcoded JSON literal keys to map via the `terms.*` namespace.
+- **(d) JSON Output**: Converted old hardcoded JSON literal keys to map via the `terms.*` namespace. Saves to `.ACD.json` by default.
 - **(e) Analysis Banner**: Displays the standard banner natively.
 
 ## Documentation
