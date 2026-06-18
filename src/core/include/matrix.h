@@ -696,7 +696,6 @@ private:
   void Multiply(_Matrix &, hyFloat);
   void ScaleAndAdd(_Matrix &, hyFloat);
   void Multiply(_Matrix &, _Matrix const &) const;
-  void ScaleAndAdd(_Matrix &, hyFloat);
   bool IsNonEmpty(long) const;
   // checks to see if the i-th position in the storage is non-empty
   bool CheckDimensions(_Matrix &) const;
