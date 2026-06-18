@@ -148,6 +148,8 @@ private:
   bool _validateCompressedStorage(void) const;
 
 public:
+  static hyFloat GetTruncationPrecision(void) { return truncPrecision; }
+  static void SetTruncationPrecision(hyFloat val) { truncPrecision = val; }
   // constructors
 
   _Matrix(); // default constructor, doesn't do much
@@ -694,6 +696,7 @@ private:
   void Multiply(_Matrix &, hyFloat);
   void ScaleAndAdd(_Matrix &, hyFloat);
   void Multiply(_Matrix &, _Matrix const &) const;
+  void ScaleAndAdd(_Matrix &, hyFloat);
   bool IsNonEmpty(long) const;
   // checks to see if the i-th position in the storage is non-empty
   bool CheckDimensions(_Matrix &) const;

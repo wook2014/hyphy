@@ -185,7 +185,8 @@ _String const kOptimizationHardLimit("OPTIMIZATION_TIME_HARD_LIMIT"),
     kOptimizationAutoPartitioning("AUTO_CREATE_PARTITION_GROUPINGS"),
     kOptimizationMethod("OPTIMIZATION_METHOD"),
     kReduceLFSmoothing("LF_SMOOTHING_REDUCTION"),
-    kOptimizationStartGrid("OPTIMIZATION_START_GRID");
+    kOptimizationStartGrid("OPTIMIZATION_START_GRID"),
+    kGridExponentiationPrecision("LF_GRID_EXPONENTIATION_PRECISION");
 
 void countingTraverse(node<long> *, long &, long, long &, bool);
 void countingTraverseArbRoot(node<long> *, node<long> *, long &, long, long &);
@@ -1575,8 +1576,7 @@ bool _LikelihoodFunction::CheckAndSetIthIndependent(long index, hyFloat p,
   }*/
 
   if (set) {
-    v->SetValue(new _Constant(p), false, true,
-                variables_changed_during_last_compute);
+    v->SetValue(p, true, variables_changed_during_last_compute);
     /**
      SLKP : because 'p' may be moved back into parameter bounds,
      if parameterValuesAndRanges is being used, we may need to update that the
@@ -5048,6 +5048,48 @@ _Matrix *_LikelihoodFunction::Optimize(_AssociativeList const *options) {
       get_optimization_setting_dict(kOptimizationStartGrid);
 
   if (initial_grid) {
+    struct GridPrecisionGuard {
+      hyFloat original_value;
+      _LikelihoodFunction *lf;
+      GridPrecisionGuard(hyFloat target_value, _LikelihoodFunction *lf_ptr) {
+        lf = lf_ptr;
+        original_value = _Matrix::GetTruncationPrecision();
+        if (target_value != original_value) {
+          _Matrix::SetTruncationPrecision(target_value);
+          lf->computationalResults.Clear();
+          for (unsigned long i = 0UL; i < lf->indexInd.lLength; i++) {
+            lf->GetIthIndependentVar(i)->varFlags |= HY_VARIABLE_CHANGED;
+          }
+          for (unsigned long i = 0L; i < lf->theTrees.lLength; i++) {
+            _TheTree *ith_tree = lf->GetIthTree(i);
+            long saved_cat_count = ith_tree->categoryCount;
+            ith_tree->CleanUpMatrices(saved_cat_count);
+            ith_tree->SetUpMatrices(saved_cat_count);
+          }
+          lf->DeleteCaches(false);
+          lf->SetupLFCaches();
+        }
+      }
+      ~GridPrecisionGuard() {
+        if (_Matrix::GetTruncationPrecision() != original_value) {
+          _Matrix::SetTruncationPrecision(original_value);
+          lf->computationalResults.Clear();
+          for (unsigned long i = 0UL; i < lf->indexInd.lLength; i++) {
+            lf->GetIthIndependentVar(i)->varFlags |= HY_VARIABLE_CHANGED;
+          }
+          for (unsigned long i = 0L; i < lf->theTrees.lLength; i++) {
+            _TheTree *ith_tree = lf->GetIthTree(i);
+            long saved_cat_count = ith_tree->categoryCount;
+            ith_tree->CleanUpMatrices(saved_cat_count);
+            ith_tree->SetUpMatrices(saved_cat_count);
+          }
+          lf->DeleteCaches(false);
+          lf->SetupLFCaches();
+        }
+      }
+    } guard(get_optimization_setting(kGridExponentiationPrecision,
+                                     _Matrix::GetTruncationPrecision()),
+            this);
 
     hyFloat max_value = -INFINITY;
     _AssociativeList *best_values = nil;
@@ -5130,6 +5172,11 @@ _Matrix *_LikelihoodFunction::Optimize(_AssociativeList const *options) {
         BufferToConsole(print_buffer);
       }
     }
+  }
+
+  if (initial_grid) {
+    maxSoFar = Compute();
+    hy_env::EnvVariableSet(kInitialGridMaximum, new _Constant(maxSoFar), false);
   }
 
   SetupParameterMapping();

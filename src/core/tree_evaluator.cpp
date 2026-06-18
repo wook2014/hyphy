@@ -593,6 +593,18 @@ inline void __ll_loop_handle_leaf_case(hyFloat *_hprestrict_ pp,
       pp[setBranchTo[siteOrdering.list_data[k]]] = localScalingFactor[k];
     }
   } else {
+#if defined(_SLKP_USE_ARM_NEON)
+    for (long k = siteFrom; k < siteTo; k++, pp += D) {
+      float64x2_t v_lsf = vdupq_n_f64(localScalingFactor[k]);
+      long s = 0;
+      for (; s < D - 1; s += 2) {
+        vst1q_f64(pp + s, v_lsf);
+      }
+      if (s < D) {
+        pp[s] = localScalingFactor[k];
+      }
+    }
+#else
     for (long k = siteFrom; k < siteTo; k++, pp += D) {
       hyFloat lsf = localScalingFactor[k];
 // #pragma unroll(4)
@@ -601,6 +613,7 @@ inline void __ll_loop_handle_leaf_case(hyFloat *_hprestrict_ pp,
         pp[s] = lsf;
       }
     }
+#endif
   }
 }
 
@@ -3055,12 +3068,13 @@ void _mx_vect_4x4_add(float64x2x2_t &cv, double const *__restrict M,
 
   // 4. Horizontal Reduction.
 
-  // --- Optimization 2: Efficient Horizontal Summation ---
-  // Use AArch64 specialized pairwise addition (FADDP instruction) via
-  // vpaddq_f64. vpaddq_f64(A, B) calculates {A0+A1, B0+B1}. This replaces the
-  // slower vzip1/vzip2/vadd sequence.
-  const float64x2_t sum12 = vpaddq_f64(dp1, dp2);
-  const float64x2_t sum34 = vpaddq_f64(dp3, dp4);
+  // --- Optimization 2: High-Throughput Horizontal Summation ---
+  // Use vzip/vadd sequence which has higher throughput and lower execution
+  // latency on AArch64 than the pairwise vpaddq_f64 (FADDP) instruction.
+  const float64x2_t sum12 =
+      vaddq_f64(vzip1q_f64(dp1, dp2), vzip2q_f64(dp1, dp2));
+  const float64x2_t sum34 =
+      vaddq_f64(vzip1q_f64(dp3, dp4), vzip2q_f64(dp3, dp4));
 
   // 5. Accumulate into the result vector cv.
   cv.val[0] = vaddq_f64(cv.val[0], sum12);
@@ -3218,17 +3232,20 @@ inline double _handle4x4_pruning_case_direct(double const *childVector,
                          vld1q_f64_x2((hyFloat *)tMatrix + 4),
                          vld1q_f64_x2((hyFloat *)tMatrix + 8)};
 
-  float64x2_t c0 = vdupq_n_f64(childVector[0] - childVector[3]),
-              c1 = vdupq_n_f64(childVector[1] - childVector[3]),
-              c2 = vdupq_n_f64(childVector[2] - childVector[3]),
-              c3 = vdupq_n_f64(childVector[3]);
+  float64x2x2_t v_child = vld1q_f64_x2(childVector);
+  float64x2_t v_c3 = vdupq_laneq_f64(v_child.val[1], 1);
+  float64x2_t c0_c1 = vsubq_f64(v_child.val[0], v_c3);
+
+  float64x2_t c0 = vdupq_laneq_f64(c0_c1, 0);
+  float64x2_t c1 = vdupq_laneq_f64(c0_c1, 1);
+  float64x2_t c2 = vdupq_laneq_f64(vsubq_f64(v_child.val[1], v_c3), 0);
 
   float64x2_t t[4];
 
   t[0] = vfmaq_f64(vmulq_f64(c1, TM[1].val[0]), c0, TM[0].val[0]);
   t[1] = vfmaq_f64(vmulq_f64(c1, TM[1].val[1]), c0, TM[0].val[1]);
-  t[2] = vfmaq_f64(c3, c2, TM[2].val[0]);
-  t[3] = vfmaq_f64(c3, c2, TM[2].val[1]);
+  t[2] = vfmaq_f64(v_c3, c2, TM[2].val[0]);
+  t[3] = vfmaq_f64(v_c3, c2, TM[2].val[1]);
 
   float64x2x2_t pc_vec = vld1q_f64_x2(parentConditionals);
   pc_vec.val[0] = vmulq_f64(pc_vec.val[0], vaddq_f64(t[0], t[2]));
@@ -3325,7 +3342,7 @@ void _hy_matrix_vector_product_blocked_4x4(double *C, double const *M,
     }
 
     C[D - 1] = M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     break;
   }
 
@@ -3399,9 +3416,9 @@ void _hy_matrix_vector_product_blocked_4x4(double *C, double const *M,
           vfmaq_f64(accumulator2.val[1], row2.val[1], col.val[1]);
     }
     C[D - 2] = M[D - 2] * V[D - 2] + M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     C[D - 1] = M[2 * D - 2] * V[D - 2] + M[2 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator2.val[0], accumulator2.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator2.val[0], accumulator2.val[1]));
 
     break;
   }
@@ -3491,14 +3508,14 @@ void _hy_matrix_vector_product_blocked_4x4(double *C, double const *M,
           vfmaq_f64(accumulator3.val[1], row3.val[1], col.val[1]);
     }
     C[D - 3] = M[D - 3] * V[D - 3] + M[D - 2] * V[D - 2] + M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     ;
     C[D - 2] = M[2 * D - 3] * V[D - 3] + M[2 * D - 2] * V[D - 2] +
                M[2 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator2.val[0], accumulator2.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator2.val[0], accumulator2.val[1]));
     C[D - 1] = M[3 * D - 3] * V[D - 3] + M[3 * D - 2] * V[D - 2] +
                M[3 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator3.val[0], accumulator3.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator3.val[0], accumulator3.val[1]));
 
     break;
   }
@@ -3573,7 +3590,7 @@ void _hy_mvp_blocked_4x4(double *C, double const *M, double const *V) {
     }
 
     C[D - 1] = M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     break;
   }
 
@@ -3638,9 +3655,9 @@ void _hy_mvp_blocked_4x4(double *C, double const *M, double const *V) {
           vfmaq_f64(accumulator2.val[1], row2.val[1], col.val[1]);
     }
     C[D - 2] = M[D - 2] * V[D - 2] + M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     C[D - 1] = M[2 * D - 2] * V[D - 2] + M[2 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator2.val[0], accumulator2.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator2.val[0], accumulator2.val[1]));
 
     break;
   }
@@ -3720,14 +3737,14 @@ void _hy_mvp_blocked_4x4(double *C, double const *M, double const *V) {
           vfmaq_f64(accumulator3.val[1], row3.val[1], col.val[1]);
     }
     C[D - 3] = M[D - 3] * V[D - 3] + M[D - 2] * V[D - 2] + M[D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]));
     ;
     C[D - 2] = M[2 * D - 3] * V[D - 3] + M[2 * D - 2] * V[D - 2] +
                M[2 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator2.val[0], accumulator2.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator2.val[0], accumulator2.val[1]));
     C[D - 1] = M[3 * D - 3] * V[D - 3] + M[3 * D - 2] * V[D - 2] +
                M[3 * D - 1] * V[D - 1] +
-               vaddvq_f64(vpaddq_f64(accumulator3.val[0], accumulator3.val[1]));
+               vaddvq_f64(vaddq_f64(accumulator3.val[0], accumulator3.val[1]));
 
     break;
   }
@@ -3821,6 +3838,31 @@ void _hy_mvp_blocked(double *C, double const *M, double const *V) {
   }
 }
 
+template <>
+inline void _hy_mvp_blocked<20>(double *C, double const *M, double const *V) {
+  _hy_mvp_blocked_4x4<20>(C, M, V);
+}
+
+template <>
+inline void _hy_mvp_blocked<60>(double *C, double const *M, double const *V) {
+  _hy_mvp_blocked_4x4<60>(C, M, V);
+}
+
+template <>
+inline void _hy_mvp_blocked<61>(double *C, double const *M, double const *V) {
+  _hy_mvp_blocked_4x4<61>(C, M, V);
+}
+
+template <>
+inline void _hy_mvp_blocked<62>(double *C, double const *M, double const *V) {
+  _hy_mvp_blocked_4x4<62>(C, M, V);
+}
+
+template <>
+inline void _hy_mvp_blocked<63>(double *C, double const *M, double const *V) {
+  _hy_mvp_blocked_4x4<63>(C, M, V);
+}
+
 // ddot multiply in and accumulate
 
 template <int D> double _hy_vvmult_sum(double *C, double const *M) {
@@ -3858,8 +3900,8 @@ template <int D> double _hy_vvmult_sum(double *C, double const *M) {
 
     // accumulator.val[0] = vaddq_f64 (accumulator.val[0], accumulator.val[1]);
     sum = vaddvq_f64(
-        vpaddq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]),
-                   vpaddq_f64(accumulator.val[2], accumulator.val[3])));
+        vaddq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]),
+                  vaddq_f64(accumulator.val[2], accumulator.val[3])));
   }
 
   if (remainder) {
@@ -3882,7 +3924,7 @@ template <int D> double _hy_vvmult_sum(double *C, double const *M) {
 
       vst1q_f64_x2(C + D - 4, CA);
 
-      sum += vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1]));
+      sum += vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1]));
       break;
     }
     case 5: {
@@ -3895,7 +3937,7 @@ template <int D> double _hy_vvmult_sum(double *C, double const *M) {
       vst1q_f64_x2(C + D - 5, CA);
 
       sum +=
-          (C[D - 1] *= M[D - 1]) + vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1]));
+          (C[D - 1] *= M[D - 1]) + vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1]));
       break;
     }
     case 6: {
@@ -3910,7 +3952,7 @@ template <int D> double _hy_vvmult_sum(double *C, double const *M) {
       vst1q_f64_x2(C + D - 6, CA);
       vst1q_f64(C + D - 2, CA2);
 
-      sum += vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1])) + vaddvq_f64(CA2);
+      sum += vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1])) + vaddvq_f64(CA2);
       break;
     }
     case 7:
@@ -3960,8 +4002,8 @@ double _hy_vvmult_sum_generic(double *C, double const *M, int D) {
 
     // accumulator.val[0] = vaddq_f64 (accumulator.val[0], accumulator.val[1]);
     sum = vaddvq_f64(
-        vpaddq_f64(vpaddq_f64(accumulator.val[0], accumulator.val[1]),
-                   vpaddq_f64(accumulator.val[2], accumulator.val[3])));
+        vaddq_f64(vaddq_f64(accumulator.val[0], accumulator.val[1]),
+                  vaddq_f64(accumulator.val[2], accumulator.val[3])));
   }
 
   if (remainder) {
@@ -3984,7 +4026,7 @@ double _hy_vvmult_sum_generic(double *C, double const *M, int D) {
 
       vst1q_f64_x2(C + D - 4, CA);
 
-      sum += vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1]));
+      sum += vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1]));
       break;
     }
     case 5: {
@@ -3997,7 +4039,7 @@ double _hy_vvmult_sum_generic(double *C, double const *M, int D) {
       vst1q_f64_x2(C + D - 5, CA);
 
       sum +=
-          (C[D - 1] *= M[D - 1]) + vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1]));
+          (C[D - 1] *= M[D - 1]) + vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1]));
       break;
     }
     case 6: {
@@ -4012,7 +4054,7 @@ double _hy_vvmult_sum_generic(double *C, double const *M, int D) {
       vst1q_f64_x2(C + D - 6, CA);
       vst1q_f64(C + D - 2, CA2);
 
-      sum += vaddvq_f64(vpaddq_f64(CA.val[0], CA.val[1])) + vaddvq_f64(CA2);
+      sum += vaddvq_f64(vaddq_f64(CA.val[0], CA.val[1])) + vaddvq_f64(CA2);
       break;
     }
     case 7:

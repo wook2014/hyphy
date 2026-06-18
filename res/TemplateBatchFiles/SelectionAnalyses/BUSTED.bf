@@ -838,7 +838,8 @@ while (!busted.converged) {
                             {
                                 "OPTIMIZATION_METHOD" : "nedler-mead",
                                 "MAXIMUM_OPTIMIZATION_ITERATIONS" : 500,
-                                "OPTIMIZATION_PRECISION" : busted.nm.precision
+                                "OPTIMIZATION_PRECISION" : busted.nm.precision,
+                                "LF_GRID_EXPONENTIATION_PRECISION" : 1e-8
                             } ,
                                                      
                         terms.search_grid     : busted.initial_grid,
@@ -874,7 +875,8 @@ while (!busted.converged) {
                             {
                                 "OPTIMIZATION_METHOD" : "nedler-mead",
                                 "MAXIMUM_OPTIMIZATION_ITERATIONS" : 500,
-                                "OPTIMIZATION_PRECISION" : busted.nm.precision
+                                "OPTIMIZATION_PRECISION" : busted.nm.precision,
+                                "LF_GRID_EXPONENTIATION_PRECISION" : 1e-8
                             } ,
                                                      
                         terms.search_grid     : busted.initial_grid,

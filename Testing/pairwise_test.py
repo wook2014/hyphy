@@ -29,7 +29,7 @@ def run_test(params):
     
     cmd = [
         "hyphy", "res/TemplateBatchFiles/dNdSRateAnalysis.bf",
-        "--alignment", "Testing/tiny.nex",
+        "--alignment", "tests/data/bglobin.nex",
         "--use-tree", "Yes",
         "--code", "Universal",
         "--branch-lengths", bl,
